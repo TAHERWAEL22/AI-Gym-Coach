@@ -104,7 +104,7 @@ def set_profile():
             weight=float(data["weight"]),
             goal=goal,
         )
-        return jsonify({"success": True, "message": "Profile saved!"})
+        return jsonify({"success": True, "message": "Profile saved!"}), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
