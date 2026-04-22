@@ -1,14 +1,12 @@
 import os
 import re
 from typing import Optional, List, Dict, Any
+
 from google import genai
 
-# ── Configuration ─────────────────────────────────────────────────────────────
 
 MODEL_NAME = os.getenv("GEMINI_MODEL", "models/gemini-flash-latest")
 
-
-# ── System Prompt ─────────────────────────────────────────────────────────────
 
 def build_system_prompt(profile: Optional[Dict[str, Any]]) -> str:
     if profile:
@@ -29,7 +27,6 @@ def build_system_prompt(profile: Optional[Dict[str, Any]]) -> str:
         "أسلوبك: فكاهي، واثق، وعلمي في نفس الوقت. بتحفز الناس بطريقة مصرية أصيلة.\n"
         "استخدم تعبيرات زي: 'يا وحش'، 'يا فورمة'، 'يا بطل المجرة'، 'عايزين فورمة الساحل'،\n"
         "'الجيم مش بيكدب'، 'الحديد بيتكلم'، 'ركز يا معلم'.\n\n"
-
         "**بروتوكول الهوية (إلزامي):**\n"
         "- ابقَ في دورك كـ كوتش جيم في كل الأوقات.\n"
         "- فقط لو سألك المستخدم صراحةً عن مطوّرك، رد بالضبط:\n"
@@ -37,27 +34,21 @@ def build_system_prompt(profile: Optional[Dict[str, Any]]) -> str:
         "- بعد الإجابة، ارجع فوراً لدورك كـ كوتش جيم.\n\n"
         f"{stats}\n\n"
         "**مواعيد الجيم:** ١٠ صباحاً لـ ١١ مساءً — كل يوم في الأسبوع.\n\n"
-
         "**بروتوكول الاكتشاف (إلزامي قبل أي خطة):**\n"
         "قبل ما تدي أي برنامج تدريبي أو غذائي أو مكملات، لازم تسأل:\n"
         "1. 🎯 إيه هدفك التحديدي؟ (تضخيم / تنشيف / لياقة عامة؟)\n"
         "2. 🩺 عندك أي إصابات أو أمراض مزمنة؟\n"
         "3. 🥗 في أكل بتكرهه أو عندك حساسية منه؟\n"
         "4. 💪 مستواك التدريبي إيه؟ (مبتدئ / متوسط / متقدم؟)\n\n"
-
         "**قواعد التمارين:**\n"
         "- اعرض البرنامج في جدول Markdown: اليوم | التمرين | السيتات | الرابتات | الراحة.\n\n"
-
         "**قواعد التغذية:**\n"
         "- اعرض الخطة في جدول Markdown: الوجبة | الأكل | السعرات | البروتين | الكارب | الدهون.\n\n"
-
         "**قواعد المكملات:**\n"
         "- قبل أي كلام عن مكملات: 'أنا AI ومش دكتور — استشير دكتور متخصص.'\n\n"
-
         "**تحديث الوزن:**\n"
         "- لو العضو ذكر وزنه الجديد، حط الماركر ده في ردك: [WEIGHT_UPDATE:القيمة]\n"
         "  مثال: 'تمام يا بطل! [WEIGHT_UPDATE:80]'\n\n"
-
         "**مهمتك:** مساعدة كل عضو يوصل لأفضل نسخة من نفسه.\n"
         "دايماً شخصن ردودك باستخدام بيانات العضو الفعلية.\n"
     )
@@ -66,114 +57,58 @@ def build_system_prompt(profile: Optional[Dict[str, Any]]) -> str:
 def _goal_description(goal: str) -> str:
     return {
         "bulk": "تضخيم وبناء عضلات",
-        "cut":  "تنشيف وحرق دهون",
-        "fit":  "لياقة عامة وصحة",
+        "cut": "تنشيف وحرق دهون",
+        "fit": "لياقة عامة وصحة",
     }.get(goal, "لياقة عامة")
 
 
-# ── Weight Detection ──────────────────────────────────────────────────────────
-
 def extract_weight_update(text: str) -> Optional[float]:
-    match = re.search(r'\[WEIGHT_UPDATE:([\d.]+)\]', text)
+    match = re.search(r"\[WEIGHT_UPDATE:([\d.]+)\]", text)
     if match:
         try:
             return float(match.group(1))
         except ValueError:
-            pass
+            return None
     return None
 
 
 def clean_response(text: str) -> str:
-    return re.sub(r'\[WEIGHT_UPDATE:[\d.]+\]', '', text).strip()
+    return re.sub(r"\[WEIGHT_UPDATE:[\d.]+\]", "", text).strip()
 
-
-# ── History Formatter ─────────────────────────────────────────────────────────
-
-def _format_history(history: List[Dict[str, str]]) -> List[Dict[str, Any]]:
-    """
-    Convert DB history rows → Gemini contents format.
-    - role must be strictly "user" or "model"
-    - parts must be a list of strings
-    - history must start with a "user" turn (Gemini requirement)
-    - consecutive same-role turns are merged to avoid validation errors
-    """
-    formatted: List[Dict[str, Any]] = []
-
-    for msg in history:
-        # Map any legacy "assistant" role to "model"
-        role = "model" if msg["role"] in ("model", "assistant") else "user"
-        content = str(msg.get("content", "")).strip()
-        if not content:
-            continue
-
-        # Merge consecutive same-role turns
-        if formatted and formatted[-1]["role"] == role:
-            formatted[-1]["parts"][0] += "\n" + content
-        else:
-            formatted.append({"role": role, "parts": [content]})
-
-    # Gemini requires history to start with a "user" turn
-    while formatted and formatted[0]["role"] != "user":
-        formatted.pop(0)
-
-    return formatted
-
-
-# ── Chat Function ─────────────────────────────────────────────────────────────
 
 def chat(
     user_message: str,
     profile: Optional[Dict[str, Any]],
     history: List[Dict[str, str]],
 ) -> Dict[str, Any]:
-    """
-    Send a message to Gemini using generate_content() with a structured
-    contents list. This avoids the 404 errors caused by start_chat() session
-    versioning issues in google-generativeai 0.8.x.
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return {"response": "GEMINI_API_KEY is not set.", "success": False}
 
-    Strategy:
-      1. Build contents = [history turns] + [new user message]
-      2. Inject system prompt as the first user turn (prefixed) so ARIA
-         stays personalised even without native system_instruction support.
-      3. Fall back to a plain single-turn prompt if the structured call fails.
+    client = genai.Client(api_key=api_key)
 
-    Returns:
-        {"response": str, "success": bool}
-    """
+    system_text = build_system_prompt(profile)
+    recent = history[-10:]
+    history_text = ""
+    for msg in recent:
+        label = "ARIA" if msg.get("role") in ("model", "assistant") else "العضو"
+        history_text += f"{label}: {msg.get('content', '')}\n"
+
+    prompt = (
+        f"{system_text}\n\n"
+        "---\n"
+        f"{history_text}"
+        "---\n"
+        f"العضو: {user_message}\n"
+        "ARIA:"
+    )
+
     try:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return {"response": "GEMINI_API_KEY is not set.", "success": False}
-
-        client = genai.Client(api_key=api_key)
-
-        system_text = build_system_prompt(profile)
-
-        # Keep roles strictly "user" or "model" at the DB/formatting layer,
-        # but send a flattened prompt string to the new SDK for max compatibility.
-        recent = history[-10:]
-        history_text = ""
-        for msg in recent:
-            label = "ARIA" if msg.get("role") in ("model", "assistant") else "العضو"
-            history_text += f"{label}: {msg.get('content', '')}\n"
-
-        prompt = (
-            f"{system_text}\n\n"
-            "---\n"
-            f"{history_text}"
-            "---\n"
-            f"العضو: {user_message}\n"
-            "ARIA:"
-        )
-
-        response = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-
-        # google-genai responses may expose text via .text; fall back if needed.
-        raw_reply = getattr(response, "text", None)
-        if raw_reply is None:
-            raw_reply = str(response)
-
-        return {"response": str(raw_reply), "success": True}
-
+        resp = client.models.generate_content(model=MODEL_NAME, contents=prompt)
+        text = getattr(resp, "text", None)
+        if text is None:
+            text = str(resp)
+        return {"response": str(text), "success": True}
     except Exception as e:
         return {"response": f"Gemini API error: {e}", "success": False}
+

@@ -17,16 +17,16 @@ if not os.environ.get("VERCEL"):
         load_dotenv(dotenv_path=env_path, override=True)
 
 # ── Startup Key Validation ────────────────────────────────────────────────────
-if not os.environ.get("GROQ_API_KEY"):
-    print("⚠️  WARNING: GROQ_API_KEY is not set. Chat will not work.")
+if not os.environ.get("GEMINI_API_KEY"):
+    print("WARNING: GEMINI_API_KEY is not set. Chat will not work.")
 else:
-    print("✅  GROQ_API_KEY detected.")
+    print("GEMINI_API_KEY detected.")
 
 from database import (
     init_db, get_user_profile, save_user_profile,
     update_user_weight, save_message, get_chat_history, clear_history
 )
-from ai_engine import chat
+from ai_engine import chat, extract_weight_update, clean_response
 
 # ── App Configuration ────────────────────────────────────────────────────────
 
@@ -123,8 +123,12 @@ def chat_endpoint():
 
     try:
         result = chat(user_message, profile, history)
-        reply = result["reply"]
-        weight_update = result["weight_update"]
+        if not result.get("success"):
+            raise RuntimeError(result.get("response", "Unknown Gemini error"))
+
+        raw_response = str(result.get("response", ""))
+        weight_update = extract_weight_update(raw_response)
+        reply = clean_response(raw_response)
 
         # Persist conversation history
         save_message("user", user_message)
